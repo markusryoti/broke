@@ -141,15 +141,12 @@ async fn handle_call(mut socket: TcpStream) -> Result<(), Box<dyn std::error::Er
     info!("Handling request");
 
     let mut result_bytes: Vec<u8> = vec![];
-
     io::copy(&mut socket, &mut result_bytes).await?;
-
     let raw_event = String::from_utf8(result_bytes)?;
 
     info!(len_raw = raw_event.len(), "Read raw event");
 
     let mut lines = raw_event.lines();
-
     let cmd = lines.next().ok_or(EventError::ParseError)?;
     let cmd = Command::from(cmd)?;
 
@@ -198,20 +195,19 @@ async fn handle_consumer(
     let file = format!("{}/{}", dir, params.partition);
 
     let file = File::open(file)?;
-
     let lines = BufReader::new(file).lines();
-
     let lines: Vec<_> = lines
         .enumerate()
         .filter(|p| p.0 >= params.offset)
         .map(|p| p.1.unwrap_or("".into()))
-        .filter(|p| !p.is_empty())
+        .filter(|l| !l.is_empty())
         .collect();
 
     info!(num_lines = lines.len(), "Sending data for consumer");
 
     for l in lines {
         let _ = socket.write(l.as_bytes()).await?;
+        let _ = socket.write(b"\n").await?;
     }
 
     Ok(())
@@ -227,6 +223,9 @@ async fn main() -> io::Result<()> {
 
     loop {
         let (socket, _) = listener.accept().await?;
-        let _ = handle_call(socket).await.inspect_err(|e| error!("{}", e));
+
+        tokio::spawn(async move {
+            let _ = handle_call(socket).await.inspect_err(|e| error!("{}", e));
+        });
     }
 }
