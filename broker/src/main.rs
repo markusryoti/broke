@@ -14,6 +14,7 @@ const NUM_PARTITIONS: usize = 2;
 enum Command {
     Push,
     Pull,
+    Join,
 }
 
 impl Command {
@@ -21,6 +22,7 @@ impl Command {
         let cmd = match raw.trim().to_uppercase().as_str() {
             "PUSH" => Command::Push,
             "PULL" => Command::Pull,
+            "JOIN" => Command::Join,
             _ => return Err(EventError::ParseError),
         };
 
@@ -55,6 +57,24 @@ impl ConsumerParams {
             topic,
             partition,
             offset,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct JoinParams {
+    consumer_group: String,
+    topic: String,
+}
+
+impl JoinParams {
+    fn parse<'a>(mut lines: impl Iterator<Item = &'a str>) -> Result<Self, EventError> {
+        let consumer_group = lines.next().ok_or(EventError::ParseError)?;
+        let topic = lines.next().ok_or(EventError::ParseError)?;
+
+        Ok(JoinParams {
+            consumer_group: consumer_group.into(),
+            topic: topic.into(),
         })
     }
 }
@@ -153,6 +173,7 @@ async fn handle_call(mut socket: TcpStream) -> Result<(), Box<dyn std::error::Er
     match cmd {
         Command::Push => handle_producer(lines).await,
         Command::Pull => handle_consumer(socket, lines).await,
+        Command::Join => handle_join(socket, lines).await,
     }
 }
 
@@ -196,19 +217,31 @@ async fn handle_consumer(
 
     let file = File::open(file)?;
     let lines = BufReader::new(file).lines();
-    let lines: Vec<_> = lines
+    let mut lines: Vec<_> = lines
         .enumerate()
         .filter(|p| p.0 >= params.offset)
         .map(|p| p.1.unwrap_or("".into()))
         .filter(|l| !l.is_empty())
         .collect();
 
+    lines.push("\n".to_string());
+
     info!(num_lines = lines.len(), "Sending data for consumer");
 
     for l in lines {
         let _ = socket.write(l.as_bytes()).await?;
-        let _ = socket.write(b"\n").await?;
     }
+
+    Ok(())
+}
+
+async fn handle_join(
+    socket: TcpStream,
+    lines: impl Iterator<Item = &str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let params = JoinParams::parse(lines)?;
+
+    info!("{:?}", params);
 
     Ok(())
 }
